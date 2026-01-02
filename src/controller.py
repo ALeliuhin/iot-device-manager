@@ -15,6 +15,10 @@ from .devices import SmartDevice, SmartBulb, SmartThermostat, SmartCamera
 # Named tuple for processed device data
 DeviceUpdate = namedtuple("DeviceUpdate", ["device_id", "timestamp", "value"])
 
+# Temperature threshold for triggering cooling
+TEMP_THRESHOLD = 30.0  # Celsius
+COOLING_TARGET = 25.0  # Target temperature when cooling is triggered
+
 
 def storage_worker(queue: Queue, log_file: str = "history.log") -> None:
     """Daemon worker that writes device updates to history.log.
@@ -60,8 +64,12 @@ async def device_update_stream(device: SmartDevice, update_queue: Queue) -> None
                 current_temp = device.current_temp
                 target_temp = device.target_temp
                 # Random variation: move towards target with some randomness
-                variation = random.uniform(-2.0, 2.0)
+                variation = random.uniform(-3.0, 5.0)  # Asymmetric: can spike higher
                 new_temp = current_temp + (target_temp - current_temp) * 0.1 + variation
+                # Occasionally add larger spikes to ensure threshold can be exceeded
+                if random.random() < 0.15:  # 15% chance of a larger spike
+                    spike = random.uniform(3.0, 8.0)
+                    new_temp += spike
                 device.execute_command("update_temp", temperature=new_temp)
                 
                 # Vary humidity slightly
@@ -102,7 +110,7 @@ def map_to_device_update(raw_data: dict) -> DeviceUpdate:
 
 
 def filter_critical_events(update: DeviceUpdate) -> bool:
-    """Filter for critical events (temp > 30 or battery < 10%).
+    """Filter for critical events (temp > threshold or battery < 10%).
     
     Args:
         update: DeviceUpdate to check
@@ -110,8 +118,8 @@ def filter_critical_events(update: DeviceUpdate) -> bool:
     Returns:
         True if event is critical, False otherwise
     """
-    # Check for high temperature (> 30) or low battery (< 10)
-    if isinstance(update.value, float) and update.value > 30:
+    # Check for high temperature (> threshold) or low battery (< 10)
+    if isinstance(update.value, float) and update.value > TEMP_THRESHOLD:
         return True  # High temperature
     if isinstance(update.value, int) and update.value < 10:
         return True  # Low battery
@@ -159,8 +167,8 @@ async def main():
     devices: List[SmartDevice] = [
         SmartBulb("bulb_01", "Living Room Light", "Living Room"),
         SmartBulb("bulb_02", "Bedroom Light", "Bedroom"),
-        SmartThermostat("thermo_01", "Main Thermostat", "Living Room", 22.0, 20.0, 45.0),
-        SmartThermostat("thermo_02", "Bedroom Thermostat", "Bedroom", 25.0, 22.0, 50.0),
+        SmartThermostat("thermo_01", "Main Thermostat", "Living Room", 28.0, 24.0, 45.0),
+        SmartThermostat("thermo_02", "Bedroom Thermostat", "Bedroom", 27.0, 25.0, 50.0),
         SmartCamera("cam_01", "Front Door Camera", "Entrance", 85),
         SmartCamera("cam_02", "Backyard Camera", "Garden", 5),
     ]
@@ -199,13 +207,24 @@ async def main():
                 # Filter: Get critical events
                 critical_events = list(filter(filter_critical_events, mapped_updates))
                 
-                # Execute commands for filtered devices (e.g., thermostats with temp > 30)
+                # Execute commands for filtered devices
                 for event in critical_events:
                     for device in devices:
                         if device.device_id == event.device_id:
-                            if device.device_type == "THERMOSTAT" and isinstance(event.value, float) and event.value > 30:
-                                device.execute_command("set_target_temp", temperature=event.value - 2)
-                                print(f"Adjusted thermostat {device.device_id} target temp to {event.value - 2}")
+                            if device.device_type == "THERMOSTAT" and isinstance(event.value, float) and event.value > TEMP_THRESHOLD:
+                                # Cool down: reduce current temperature below threshold
+                                current_temp = device.current_temp
+                                # Cool down by at least 5°C, but ensure it goes below threshold
+                                # Target cooling to COOLING_TARGET, but at minimum bring it below threshold
+                                cooling_amount = max(5.0, current_temp - COOLING_TARGET)
+                                new_temp = current_temp - cooling_amount
+                                # Ensure temperature is below threshold after cooling
+                                if new_temp >= TEMP_THRESHOLD:
+                                    new_temp = TEMP_THRESHOLD - 2.0  # Cool to 2°C below threshold
+                                device.execute_command("update_temp", temperature=new_temp)
+                                device.execute_command("set_target_temp", temperature=COOLING_TARGET)
+                                print(f"⚠ ALERT: High Temp detected! Triggering cooling...")
+                                print(f"Smart Thermostat command executed: Temperature adjusted.")
                             elif device.device_type == "CAMERA" and isinstance(event.value, int) and event.value < 10:
                                 print(f"Warning: Camera {device.device_id} battery low: {event.value}%")
                 
