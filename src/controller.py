@@ -54,6 +54,22 @@ async def device_update_stream(device: SmartDevice, update_queue: Queue) -> None
         await asyncio.sleep(random.uniform(1, 5))
         
         if device.is_connected:
+            # Vary thermostat temperatures and humidity
+            if isinstance(device, SmartThermostat):
+                # Vary current temperature around target temperature
+                current_temp = device.current_temp
+                target_temp = device.target_temp
+                # Random variation: move towards target with some randomness
+                variation = random.uniform(-2.0, 2.0)
+                new_temp = current_temp + (target_temp - current_temp) * 0.1 + variation
+                device.execute_command("update_temp", temperature=new_temp)
+                
+                # Vary humidity slightly
+                current_humidity = device.humidity
+                humidity_variation = random.uniform(-3.0, 3.0)
+                new_humidity = max(0.0, min(100.0, current_humidity + humidity_variation))
+                device.execute_command("update_humidity", humidity=new_humidity)
+            
             update = device.send_update()
             update["timestamp"] = datetime.now().isoformat()
             update_queue.put(update)
