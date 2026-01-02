@@ -35,6 +35,11 @@ class SmartDevice(ABC):
         """Get the device type."""
         return self._device_type
     
+    @property
+    def is_connected(self) -> bool:
+        """Get the connection status."""
+        return self._connected
+    
     def connect(self) -> None:
         """Connect the device to the network."""
         self._connected = True
