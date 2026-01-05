@@ -1,6 +1,7 @@
 """Central controller for managing IoT devices with async updates, analytics, and storage."""
 import asyncio
 import json
+import logging
 import random
 import threading
 from collections import namedtuple
@@ -10,6 +11,26 @@ from queue import Queue
 from typing import List
 
 from .devices import SmartDevice, SmartBulb, SmartThermostat, SmartCamera
+
+# Configure logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Create formatter
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+file_handler = logging.FileHandler("history.log")
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(formatter)
+
+# Console handler for terminal output
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(formatter)
+
+# Add both handlers to logger
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
 
 
 # Named tuple for processed device data
@@ -44,7 +65,7 @@ def storage_worker(queue: Queue, log_file: str = "history.log") -> None:
             
             queue.task_done()
         except Exception as e:
-            print(f"Error writing to log: {e}")
+            logger.error(f"Error writing to log: {e}")
 
 
 async def device_update_stream(device: SmartDevice, update_queue: Queue) -> None:
@@ -177,7 +198,7 @@ async def main():
     for device in devices:
         device.connect()
     
-    print(f"Connected {len(devices)} devices to the network")
+    logger.info(f"Connected {len(devices)} devices to the network")
     
     # 4. Create async tasks for each device to send updates
     tasks = [
@@ -223,15 +244,15 @@ async def main():
                                     new_temp = TEMP_THRESHOLD - 2.0  # Cool to 2°C below threshold
                                 device.execute_command("update_temp", temperature=new_temp)
                                 device.execute_command("set_target_temp", temperature=COOLING_TARGET)
-                                print(f"⚠ ALERT: High Temp detected! Triggering cooling...")
-                                print(f"Smart Thermostat command executed: Temperature adjusted.")
+                                logger.warning(f"⚠ ALERT: High Temp detected! Triggering cooling...")
+                                logger.info(f"Smart Thermostat command executed: Temperature adjusted.")
                             elif device.device_type == "CAMERA" and isinstance(event.value, int) and event.value < 10:
-                                print(f"Warning: Camera {device.device_id} battery low: {event.value}%")
+                                logger.warning(f"Warning: Camera {device.device_id} battery low: {event.value}%")
                 
                 # Reduce: Calculate metrics
                 avg_temp = calculate_average_temperature(mapped_updates)
                 if avg_temp > 0:
-                    print(f"Average house temperature: {avg_temp:.2f}°C")
+                    logger.info(f"Average house temperature: {avg_temp:.2f}°C")
                 
                 # 6. Put raw updates in storage queue
                 for update in update_batch:
@@ -242,7 +263,7 @@ async def main():
             await asyncio.sleep(0.1)  # Small delay to prevent busy waiting
             
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        logger.info("Shutting down...")
         # Signal storage thread to stop
         storage_queue.put(None)
         # Cancel all device tasks
